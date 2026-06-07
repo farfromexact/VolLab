@@ -35,11 +35,45 @@ TRADE_COLUMNS = [
     "iv_percentile",
     "iv_minus_rv20",
     "entry_mode_used",
+    "signal_call_close",
+    "signal_put_close",
+    "signal_call_volume",
+    "signal_put_volume",
+    "signal_call_open_interest",
+    "signal_put_open_interest",
+    "signal_straddle_close",
+    "signal_straddle_premium_to_spot",
+    "entry_call_open",
+    "entry_put_open",
+    "entry_straddle_open",
+    "exit_call_close",
+    "exit_put_close",
+    "exit_straddle_close",
+    "signal_call_bid",
+    "signal_call_ask",
+    "signal_put_bid",
+    "signal_put_ask",
+    "call_bid_ask_spread",
+    "put_bid_ask_spread",
 ]
 
 
 def _finite_positive(value) -> bool:
     return value is not None and np.isfinite(value) and float(value) > 0
+
+
+def _finite_number(value) -> bool:
+    return value is not None and np.isfinite(value)
+
+
+def _float_or_nan(value) -> float:
+    return float(value) if _finite_number(value) else np.nan
+
+
+def _spread_or_nan(bid, ask) -> float:
+    if _finite_number(bid) and _finite_number(ask):
+        return float(ask) - float(bid)
+    return np.nan
 
 
 def _get_option_row(option_daily: pd.DataFrame, option_code: str, date: pd.Timestamp) -> pd.Series | None:
@@ -126,6 +160,7 @@ def run_straddle_strategy(provider, config: dict, start_date=None, end_date=None
 
         call_signal_price = float(selection["call"]["close"])
         put_signal_price = float(selection["put"]["close"])
+        signal_straddle_close = call_signal_price + put_signal_price
         strike = float(selection["strike"])
         dte = int(selection["dte"])
         T = max(dte / 252.0, 1.0 / 252.0)
@@ -212,6 +247,30 @@ def run_straddle_strategy(provider, config: dict, start_date=None, end_date=None
                     "iv_percentile": current_iv_percentile,
                     "iv_minus_rv20": iv_minus_rv20,
                     "entry_mode_used": entry_mode_used,
+                    "signal_call_close": call_signal_price,
+                    "signal_put_close": put_signal_price,
+                    "signal_call_volume": _float_or_nan(selection["call"].get("volume")),
+                    "signal_put_volume": _float_or_nan(selection["put"].get("volume")),
+                    "signal_call_open_interest": _float_or_nan(selection["call"].get("open_interest")),
+                    "signal_put_open_interest": _float_or_nan(selection["put"].get("open_interest")),
+                    "signal_straddle_close": signal_straddle_close,
+                    "signal_straddle_premium_to_spot": signal_straddle_close / spot if spot > 0 else np.nan,
+                    "entry_call_open": _float_or_nan(call_entry.get("open")),
+                    "entry_put_open": _float_or_nan(put_entry.get("open")),
+                    "entry_straddle_open": (
+                        _float_or_nan(call_entry.get("open")) + _float_or_nan(put_entry.get("open"))
+                        if _finite_number(call_entry.get("open")) and _finite_number(put_entry.get("open"))
+                        else np.nan
+                    ),
+                    "exit_call_close": float(exit_call_price),
+                    "exit_put_close": float(exit_put_price),
+                    "exit_straddle_close": raw_exit_premium,
+                    "signal_call_bid": _float_or_nan(selection["call"].get("bid")),
+                    "signal_call_ask": _float_or_nan(selection["call"].get("ask")),
+                    "signal_put_bid": _float_or_nan(selection["put"].get("bid")),
+                    "signal_put_ask": _float_or_nan(selection["put"].get("ask")),
+                    "call_bid_ask_spread": _spread_or_nan(selection["call"].get("bid"), selection["call"].get("ask")),
+                    "put_bid_ask_spread": _spread_or_nan(selection["put"].get("bid"), selection["put"].get("ask")),
                 }
             )
 

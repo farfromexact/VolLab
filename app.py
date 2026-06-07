@@ -30,11 +30,35 @@ REPORT_FILES = {
 ARTIFACT_FILES = {
     "feature_table": "data/processed/feature_table.csv",
     "label_table": "data/processed/label_table.csv",
+    "label_table_by_horizon": "data/processed/label_table_by_horizon.csv",
+    "event_classification": "data/processed/event_classification.csv",
+    "data_quality_fields": "reports/data_quality_fields.csv",
+    "event_type_summary": "reports/event_type_summary.csv",
+    "dte_research_summary": "reports/dte_research_summary.csv",
+    "exit_policy_summary": "reports/exit_policy_summary.csv",
+    "exit_policy_by_event_type": "reports/exit_policy_by_event_type.csv",
+    "exit_policy_by_dte": "reports/exit_policy_by_dte.csv",
+    "straddle_vs_strangle_summary": "reports/straddle_vs_strangle_summary.csv",
     "event_daily": "reports/event_study_top_daily_pnl.csv",
     "event_trades": "reports/event_study_top_trades.csv",
     "event_windows": "reports/event_study_windows.csv",
     "timing_summary": "reports/timing_experiment_summary.csv",
 }
+
+
+def dashboard_file_fingerprint() -> tuple[tuple[str, int, int], ...]:
+    paths = [("config", resolve_project_path("config.yaml"))]
+    paths.extend((f"processed:{name}", resolve_project_path("data/processed") / filename) for name, filename in REPORT_FILES.items())
+    paths.extend((f"artifact:{name}", resolve_project_path(rel_path)) for name, rel_path in ARTIFACT_FILES.items())
+
+    fingerprint = []
+    for key, path in paths:
+        if path.exists():
+            stat = path.stat()
+            fingerprint.append((key, stat.st_mtime_ns, stat.st_size))
+        else:
+            fingerprint.append((key, 0, -1))
+    return tuple(fingerprint)
 
 
 def read_csv_safe(path: Path, parse_date_columns: list[str] | None = None) -> pd.DataFrame:
@@ -85,7 +109,7 @@ def underlying_from_trades(trades: pd.DataFrame) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
-def load_dashboard_data():
+def load_dashboard_data(fingerprint: tuple[tuple[str, int, int], ...]):
     config = load_config()
     processed_reports = load_processed_reports(resolve_project_path("data/processed"))
     artifacts = load_artifacts()
@@ -368,10 +392,130 @@ def render_score_components(feature_table: pd.DataFrame):
     st.dataframe(features[["signal_date", *existing]].tail(60), width="stretch")
 
 
-config, underlying, reports, artifacts, source_mode = load_dashboard_data()
+def render_data_quality_lab(artifacts: dict[str, pd.DataFrame]):
+    st.header("Data Quality")
+    audit = artifacts.get("data_quality_fields", pd.DataFrame())
+    if audit.empty:
+        st.info("Run `python scripts/audit_data_quality.py` first.")
+        return
 
-tab_overview, tab_feature, tab_event, tab_rule, tab_score = st.tabs(
-    ["Overview", "Feature Lab", "Event Study", "Rule Lab", "Score Components"]
+    required = audit.loc[~audit["field"].astype(str).str.contains("bid|ask|spread", case=False, regex=True)]
+    cols = st.columns(3)
+    cols[0].metric("Fields", f"{len(audit):,}")
+    cols[1].metric("Required Completeness", fmt_pct(required["completeness"].mean()))
+    cols[2].metric("Signal Close Completeness", fmt_pct(audit.loc[audit["field"].isin(["signal_call_close", "signal_put_close"]), "completeness"].mean()))
+    chart = audit[["field", "completeness"]].set_index("field").sort_values("completeness")
+    st.bar_chart(chart)
+    st.dataframe(audit, width="stretch")
+
+
+def render_event_type_lab(artifacts: dict[str, pd.DataFrame]):
+    st.header("Event Type Lab")
+    summary = artifacts.get("event_type_summary", pd.DataFrame())
+    events = artifacts.get("event_classification", pd.DataFrame())
+    if summary.empty:
+        st.info("Run `python scripts/run_dte_research.py` or `python scripts/run_event_classification.py` first.")
+        return
+
+    holding_options = sorted(summary["holding_days"].dropna().astype(int).unique()) if "holding_days" in summary else []
+    if not holding_options:
+        st.dataframe(summary, width="stretch")
+        return
+    holding = st.selectbox("Holding", holding_options, index=min(2, len(holding_options) - 1) if holding_options else 0)
+    filtered = summary.loc[summary["holding_days"].astype(int).eq(int(holding))] if holding_options else summary
+    st.dataframe(filtered.sort_values(["event_type"]), width="stretch")
+    if {"event_type", "avg_return"}.issubset(filtered.columns):
+        st.bar_chart(filtered.set_index("event_type")["avg_return"])
+    if not events.empty:
+        st.subheader("Classifications")
+        st.dataframe(events.tail(200), width="stretch")
+
+
+def render_dte_lab(artifacts: dict[str, pd.DataFrame]):
+    st.header("DTE Lab")
+    summary = artifacts.get("dte_research_summary", pd.DataFrame())
+    if summary.empty:
+        st.info("Run `python scripts/run_dte_research.py` first.")
+        return
+
+    post_only = st.toggle("Post-warmup only", value=True)
+    holding_options = sorted(summary["holding_days"].dropna().astype(int).unique()) if "holding_days" in summary else []
+    if not holding_options:
+        st.dataframe(summary, width="stretch")
+        return
+    holding = st.selectbox("DTE holding", holding_options, index=min(2, len(holding_options) - 1) if holding_options else 0)
+    filtered = summary.loc[
+        summary["post_warmup_only"].astype(bool).eq(bool(post_only))
+        & summary["holding_days"].astype(int).eq(int(holding))
+        & summary["event_type"].astype(str).eq("all")
+    ].copy()
+    st.dataframe(filtered, width="stretch")
+    if {"dte_bucket", "avg_return"}.issubset(filtered.columns):
+        st.bar_chart(filtered.set_index("dte_bucket")["avg_return"])
+
+    event_rows = summary.loc[
+        summary["post_warmup_only"].astype(bool).eq(bool(post_only))
+        & summary["holding_days"].astype(int).eq(int(holding))
+        & ~summary["event_type"].astype(str).eq("all")
+    ]
+    st.subheader("By Event Type")
+    st.dataframe(event_rows, width="stretch")
+
+
+def render_exit_policy_lab(artifacts: dict[str, pd.DataFrame]):
+    st.header("Exit Policy Lab")
+    summary = artifacts.get("exit_policy_summary", pd.DataFrame())
+    by_event = artifacts.get("exit_policy_by_event_type", pd.DataFrame())
+    by_dte = artifacts.get("exit_policy_by_dte", pd.DataFrame())
+    if summary.empty:
+        st.info("Run `python scripts/run_exit_policy_experiments.py` first.")
+        return
+
+    st.dataframe(summary.sort_values(["avg_return"], ascending=False), width="stretch")
+    if {"policy", "avg_return"}.issubset(summary.columns):
+        st.bar_chart(summary.set_index("policy")["avg_return"])
+    cols = st.columns(2)
+    with cols[0]:
+        st.subheader("By Event Type")
+        st.dataframe(by_event, width="stretch")
+    with cols[1]:
+        st.subheader("By DTE")
+        st.dataframe(by_dte, width="stretch")
+
+
+def render_strangle_lab(artifacts: dict[str, pd.DataFrame]):
+    st.header("Straddle vs Strangle")
+    summary = artifacts.get("straddle_vs_strangle_summary", pd.DataFrame())
+    if summary.empty:
+        st.info("Run `python scripts/run_straddle_vs_strangle.py` first.")
+        return
+
+    holding_options = sorted(summary["holding_days"].dropna().astype(int).unique()) if "holding_days" in summary else []
+    if not holding_options:
+        st.dataframe(summary, width="stretch")
+        return
+    holding = st.selectbox("Strategy holding", holding_options, index=min(2, len(holding_options) - 1) if holding_options else 0)
+    filtered = summary.loc[summary["holding_days"].astype(int).eq(int(holding)) & summary["event_type"].astype(str).eq("all")]
+    st.dataframe(filtered, width="stretch")
+    if {"strategy", "avg_return"}.issubset(filtered.columns):
+        st.bar_chart(filtered.set_index("strategy")["avg_return"])
+
+
+config, underlying, reports, artifacts, source_mode = load_dashboard_data(dashboard_file_fingerprint())
+
+tab_overview, tab_feature, tab_event, tab_rule, tab_score, tab_data_quality, tab_event_type, tab_dte, tab_exit, tab_strangle = st.tabs(
+    [
+        "Overview",
+        "Feature Lab",
+        "Event Study",
+        "Rule Lab",
+        "Score Components",
+        "Data Quality",
+        "Event Type Lab",
+        "DTE Lab",
+        "Exit Policy Lab",
+        "Straddle vs Strangle",
+    ]
 )
 
 with tab_overview:
@@ -392,3 +536,18 @@ with tab_rule:
 
 with tab_score:
     render_score_components(artifacts.get("feature_table", pd.DataFrame()))
+
+with tab_data_quality:
+    render_data_quality_lab(artifacts)
+
+with tab_event_type:
+    render_event_type_lab(artifacts)
+
+with tab_dte:
+    render_dte_lab(artifacts)
+
+with tab_exit:
+    render_exit_policy_lab(artifacts)
+
+with tab_strangle:
+    render_strangle_lab(artifacts)

@@ -47,8 +47,61 @@ FEATURE_COLUMNS = [
     "put_volume",
     "put_call_volume_ratio",
     "put_call_oi_ratio",
+    "signal_call_close",
+    "signal_put_close",
+    "signal_call_volume",
+    "signal_put_volume",
+    "signal_call_open_interest",
+    "signal_put_open_interest",
+    "signal_straddle_close",
+    "signal_straddle_premium_to_spot",
+    "entry_call_open",
+    "entry_put_open",
+    "entry_straddle_open",
+    "exit_call_close",
+    "exit_put_close",
+    "exit_straddle_close",
+    "signal_call_bid",
+    "signal_call_ask",
+    "signal_put_bid",
+    "signal_put_ask",
+    "call_bid_ask_spread",
+    "put_bid_ask_spread",
     "dte",
     "strike",
+    "straddle_close_price",
+    "straddle_premium_to_spot",
+    "call_close",
+    "put_close",
+]
+
+OPTION_SNAPSHOT_COLUMNS = [
+    "signal_call_close",
+    "signal_put_close",
+    "signal_call_volume",
+    "signal_put_volume",
+    "signal_call_open_interest",
+    "signal_put_open_interest",
+    "signal_straddle_close",
+    "signal_straddle_premium_to_spot",
+    "entry_call_open",
+    "entry_put_open",
+    "entry_straddle_open",
+    "exit_call_close",
+    "exit_put_close",
+    "exit_straddle_close",
+    "signal_call_bid",
+    "signal_call_ask",
+    "signal_put_bid",
+    "signal_put_ask",
+    "call_bid_ask_spread",
+    "put_bid_ask_spread",
+    "option_total_volume",
+    "option_total_open_interest",
+    "call_volume",
+    "put_volume",
+    "put_call_volume_ratio",
+    "put_call_oi_ratio",
     "straddle_close_price",
     "straddle_premium_to_spot",
     "call_close",
@@ -145,18 +198,7 @@ def _range_percentile(range_series: pd.Series, lookback: int = 252) -> pd.Series
 
 def _merge_option_snapshot(features: pd.DataFrame, option_snapshot: pd.DataFrame | None) -> pd.DataFrame:
     output = features.copy()
-    for column in [
-        "option_total_volume",
-        "option_total_open_interest",
-        "call_volume",
-        "put_volume",
-        "put_call_volume_ratio",
-        "put_call_oi_ratio",
-        "straddle_close_price",
-        "straddle_premium_to_spot",
-        "call_close",
-        "put_close",
-    ]:
+    for column in OPTION_SNAPSHOT_COLUMNS:
         output[column] = np.nan
 
     if option_snapshot is None or option_snapshot.empty:
@@ -165,21 +207,80 @@ def _merge_option_snapshot(features: pd.DataFrame, option_snapshot: pd.DataFrame
 
     snap = option_snapshot.copy()
     snap["signal_date"] = pd.to_datetime(snap["signal_date"]).dt.normalize()
-    output = output.drop(
-        columns=[
-            "option_total_volume",
-            "option_total_open_interest",
-            "call_volume",
-            "put_volume",
-            "put_call_volume_ratio",
-            "put_call_oi_ratio",
-            "straddle_close_price",
-            "straddle_premium_to_spot",
-            "call_close",
-            "put_close",
-        ]
-    ).merge(snap, on="signal_date", how="left")
+    for column in OPTION_SNAPSHOT_COLUMNS:
+        if column not in snap.columns:
+            snap[column] = np.nan
+    output = output.drop(columns=OPTION_SNAPSHOT_COLUMNS).merge(
+        snap[["signal_date", *OPTION_SNAPSHOT_COLUMNS]],
+        on="signal_date",
+        how="left",
+    )
     return output
+
+
+def _numeric(frame: pd.DataFrame, column: str) -> pd.Series:
+    if column not in frame.columns:
+        return pd.Series(np.nan, index=frame.index, dtype="float64")
+    return pd.to_numeric(frame[column], errors="coerce")
+
+
+def _option_snapshot_from_trades(trade_details: pd.DataFrame) -> pd.DataFrame:
+    if trade_details.empty:
+        return pd.DataFrame(columns=["signal_date", *OPTION_SNAPSHOT_COLUMNS])
+
+    rows = trade_details.copy()
+    rows["signal_date"] = pd.to_datetime(rows["signal_date"]).dt.normalize()
+    rows = rows.sort_values(["signal_date", "holding_days"]).drop_duplicates("signal_date", keep="first")
+    snapshot = pd.DataFrame({"signal_date": rows["signal_date"]}, index=rows.index)
+
+    for column in OPTION_SNAPSHOT_COLUMNS:
+        snapshot[column] = _numeric(rows, column)
+
+    if snapshot["entry_call_open"].isna().all() and "entry_mode_used" in rows.columns:
+        next_open = rows["entry_mode_used"].astype(str).str.lower().eq("next_open")
+        snapshot.loc[next_open, "entry_call_open"] = _numeric(rows, "entry_call_price").loc[next_open]
+        snapshot.loc[next_open, "entry_put_open"] = _numeric(rows, "entry_put_price").loc[next_open]
+    if snapshot["exit_call_close"].isna().all():
+        snapshot["exit_call_close"] = _numeric(rows, "exit_call_price")
+    if snapshot["exit_put_close"].isna().all():
+        snapshot["exit_put_close"] = _numeric(rows, "exit_put_price")
+
+    if snapshot["entry_straddle_open"].isna().all():
+        snapshot["entry_straddle_open"] = snapshot["entry_call_open"] + snapshot["entry_put_open"]
+    if snapshot["exit_straddle_close"].isna().all():
+        snapshot["exit_straddle_close"] = snapshot["exit_call_close"] + snapshot["exit_put_close"]
+    if snapshot["signal_straddle_close"].isna().all():
+        snapshot["signal_straddle_close"] = snapshot["signal_call_close"] + snapshot["signal_put_close"]
+    if snapshot["signal_straddle_premium_to_spot"].isna().all():
+        spot = _numeric(rows, "spot_at_signal").replace(0, np.nan)
+        snapshot["signal_straddle_premium_to_spot"] = snapshot["signal_straddle_close"] / spot
+
+    if snapshot["call_bid_ask_spread"].isna().all():
+        snapshot["call_bid_ask_spread"] = snapshot["signal_call_ask"] - snapshot["signal_call_bid"]
+    if snapshot["put_bid_ask_spread"].isna().all():
+        snapshot["put_bid_ask_spread"] = snapshot["signal_put_ask"] - snapshot["signal_put_bid"]
+
+    snapshot["call_volume"] = snapshot["call_volume"].combine_first(snapshot["signal_call_volume"])
+    snapshot["put_volume"] = snapshot["put_volume"].combine_first(snapshot["signal_put_volume"])
+    snapshot["option_total_volume"] = snapshot["option_total_volume"].combine_first(
+        snapshot["call_volume"] + snapshot["put_volume"]
+    )
+    total_oi = snapshot["signal_call_open_interest"] + snapshot["signal_put_open_interest"]
+    snapshot["option_total_open_interest"] = snapshot["option_total_open_interest"].combine_first(total_oi)
+    snapshot["put_call_volume_ratio"] = snapshot["put_call_volume_ratio"].combine_first(
+        snapshot["put_volume"] / snapshot["call_volume"].replace(0, np.nan)
+    )
+    snapshot["put_call_oi_ratio"] = snapshot["put_call_oi_ratio"].combine_first(
+        snapshot["signal_put_open_interest"] / snapshot["signal_call_open_interest"].replace(0, np.nan)
+    )
+    snapshot["call_close"] = snapshot["call_close"].combine_first(snapshot["signal_call_close"])
+    snapshot["put_close"] = snapshot["put_close"].combine_first(snapshot["signal_put_close"])
+    snapshot["straddle_close_price"] = snapshot["straddle_close_price"].combine_first(snapshot["signal_straddle_close"])
+    snapshot["straddle_premium_to_spot"] = snapshot["straddle_premium_to_spot"].combine_first(
+        snapshot["signal_straddle_premium_to_spot"]
+    )
+
+    return snapshot[["signal_date", *OPTION_SNAPSHOT_COLUMNS]].reset_index(drop=True)
 
 
 def build_feature_table(
@@ -281,6 +382,8 @@ def build_feature_table(
         logger.warning("underlying volume is missing; volume z-score is NaN.")
         frame["underlying_volume_zscore_20d"] = np.nan
 
+    if option_snapshot is None:
+        option_snapshot = _option_snapshot_from_trades(signal_rows)
     frame = _merge_option_snapshot(frame, option_snapshot)
 
     for column in FEATURE_COLUMNS:

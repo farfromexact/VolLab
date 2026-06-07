@@ -17,6 +17,7 @@ data/processed/*
 !data/mock/.gitkeep
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+!data/processed/*.csv
 
 # Logs
 *.log
@@ -26,4 +27,3 @@ data/processed/*
 Thumbs.db
 .idea/
 .vscode/
-

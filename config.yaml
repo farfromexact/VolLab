@@ -16,6 +16,17 @@ data_mode: "wind"
 backtest_start_date: "2024-01-02"
 backtest_end_date: "2026-06-05"
 
+event_thresholds:
+  shock_return_threshold: 0.025
+  gap_threshold: 0.012
+  rv_expansion_threshold: 1.2
+  iv_expansion_vol_point: 0.03
+  iv_crush_vol_point: -0.03
+  leg_pnl_dominance_ratio: 1.2
+  theta_decay_abs_return_threshold: 0.01
+  no_move_return_threshold: 0.05
+  iv_stop_loss_vol_point: -0.03
+
 mock_start_date: "2022-01-03"
 mock_end_date: "2024-12-31"
 mock_seed: 42
