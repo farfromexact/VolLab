@@ -1,32 +1,77 @@
 # VolLab
 
-VolLab is a Python research project for daily ATM straddle studies on China equity index options. Version 0.2 extends the original backtest into a Timing Research Lab with feature tables, labels, event studies, rule experiments, and score component analysis.
+VolLab is a Python research project for daily long-gamma studies on China equity index options, focused on MO options on `000852.SH`.
 
-It does not place orders, consume real-time market data, or model full volatility surfaces.
+Version 0.3 extends the original ATM straddle backtest into an event-driven research lab with:
+
+- Wind-backed signal-date option quality fields
+- horizon labels
+- event classification
+- DTE research
+- exit-policy experiments
+- ATM straddle vs OTM strangle comparison
+- Streamlit dashboard pages for the v0.3 research outputs
+
+VolLab does not place orders, consume real-time market data, or model full volatility surfaces.
 
 ## Current Research Findings
 
-The latest v0.2 review is in `reports/research_findings.md`. The main conclusion is deliberately conservative: current data does not show a stable, monotonic, directly tradable timing signal for buying MO ATM straddles.
+The latest v0.3 review is in `reports/v03_research_findings.md`.
 
-Key findings:
+The current conclusion remains deliberately conservative: Wind-backed data quality is now good enough for signal-premium and strangle research, but the evidence still does not support a stable, directly tradable long-gamma rule.
 
-- Past top 10% straddle-return events do not share one robust pre-signal.
-- `IV - RV20` is not usually lower before top events; lower implied volatility versus realized volatility did not work as a monotonic signal.
-- `range_percentile_252` is not usually lower before top events after warmup.
-- `RV20_change_5d` is not reliably rising before top events.
-- `straddle_premium_to_spot` is not yet fully testable because older trade records did not save signal-date option closes; `entry_premium / spot_at_signal` is only a proxy and does not show a clear cheapness edge.
-- DTE has the most useful weak tendency: post-warmup top events appear more often in shorter DTE buckets, especially around 10-16 days, but the relationship is not strictly monotonic.
-- 2024-09/10 and 2025-04 spikes are different event types. Both depend materially on a small number of large wins.
-- `daily_rolling`, `non_overlapping`, and `one_position_at_a_time` execution modes lead to the same broad conclusion: the default rules are not robust.
-- Removing warmup makes score and feature bucket conclusions weaker, not stronger.
-- No core feature currently passes a strict monotonicity check.
+Key findings from the Wind-backed v0.3 run:
+
+- `signal_call_close`, `signal_put_close`, signal volume, and signal open interest are now 100% complete in the v0.3 trade rows.
+- ATM straddle baseline: 1,880 horizon trades, 31.8% win rate, 0.4% average return, -5.6% median return, and -805,129.8 total net PnL.
+- Winners are still concentrated in ex-post `up_shock` and `down_shock` buckets. These labels explain where profits came from, but they are not entry signals.
+- Post-warmup `7-10` DTE / 5d is the only clearly positive DTE slice, but it has only 11 trades.
+- `stop_loss_30pct` improves tail loss and total PnL, but median return remains negative and total PnL depends on a small number of large winners.
+- 3% and 5% OTM strangles are now provider-chain results, not placeholders. They are cheaper and more convex in average-return terms, but all OTM median returns remain negative.
 
 Research discipline for the next iteration:
 
 - Do not optimize PnL first.
-- First improve signal-date option snapshot quality: call/put close, volume, open interest, and true `straddle_premium_to_spot`.
-- Separate spike event types before fitting or tuning rules.
-- Always report trade count, win rate, average return, median return, max loss, and top-five-wins contribution.
+- Use the newly available signal premium, volume, open interest, DTE, and realized-vol regime fields to test whether shock-prone windows can be identified before the event.
+- Always report trade count, win rate, average return, median return, max loss, max win, and top-winners concentration.
+
+## Dashboard
+
+Run the dashboard locally:
+
+```powershell
+streamlit run app.py
+```
+
+Dashboard sections:
+
+- Overview
+- Feature Lab
+- Event Study
+- Rule Lab
+- Score Components
+- Data Quality
+- Event Type Lab
+- DTE Lab
+- Exit Policy Lab
+- Straddle vs Strangle
+
+When `data_mode=wind` and the committed `data/processed/*.csv` files exist, the dashboard reads the precomputed CSV outputs instead of initializing WindPy. This is intentional so Streamlit Cloud can deploy without Wind Terminal access.
+
+## Streamlit Cloud Deployment
+
+The repository includes the current Wind-backed processed CSV outputs:
+
+- `data/processed/trade_details.csv`
+- `data/processed/feature_table.csv`
+- `data/processed/label_table.csv`
+- `data/processed/label_table_by_horizon.csv`
+- `data/processed/event_classification.csv`
+- `reports/*.csv`
+
+On Streamlit Cloud, the app should display these committed numbers directly. It should not need WindPy or a Wind Terminal session unless the processed CSV files are removed.
+
+If you rerun Wind locally and want the deployed dashboard to update, commit and push the regenerated `data/processed/*.csv` and `reports/*.csv` files.
 
 ## Install
 
@@ -35,6 +80,46 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 ```
+
+Run tests:
+
+```powershell
+pytest
+```
+
+## Wind-Backed v0.3 Pipeline
+
+For Wind mode, keep the Wind terminal logged in, then run Python from a normal local shell. In restricted Codex sandboxes, `w.start()` may return login failure even when Wind works in a normal shell.
+
+Full v0.3 rebuild:
+
+```powershell
+python scripts/run_backtest.py
+python scripts/audit_data_quality.py
+python scripts/build_feature_table.py
+python scripts/build_label_table_by_horizon.py
+python scripts/run_event_classification.py
+python scripts/run_dte_research.py
+python scripts/run_exit_policy_experiments.py
+python scripts/run_straddle_vs_strangle.py
+pytest
+```
+
+Main outputs:
+
+- `data/processed/trade_details.csv`
+- `data/processed/trade_details_v03_quality_fields.csv`
+- `data/processed/feature_table.csv`
+- `data/processed/label_table.csv`
+- `data/processed/label_table_by_horizon.csv`
+- `data/processed/event_classification.csv`
+- `reports/data_quality_report.md`
+- `reports/event_type_summary.csv`
+- `reports/dte_research_summary.csv`
+- `reports/exit_policy_summary.csv`
+- `reports/straddle_vs_strangle_summary.csv`
+- `reports/strangle_trade_details.csv`
+- `reports/v03_research_findings.md`
 
 ## Mock Mode
 
@@ -50,48 +135,6 @@ Run the ATM straddle backtest and write reports to `data/processed/`:
 python scripts/run_backtest.py
 ```
 
-Open the dashboard:
-
-```powershell
-streamlit run app.py
-```
-
-Run tests:
-
-```powershell
-pytest
-```
-
-## Timing Research Lab
-
-After `scripts/run_backtest.py` has produced `data/processed/trade_details.csv`, build the v0.2 research artifacts:
-
-```powershell
-python scripts/build_feature_table.py
-python scripts/run_event_study.py
-python scripts/run_timing_experiments.py
-python scripts/audit_metrics.py
-```
-
-Outputs:
-
-- `data/processed/feature_table.csv`
-- `data/processed/label_table.csv`
-- `reports/event_study_top_daily_pnl.csv`
-- `reports/event_study_top_trades.csv`
-- `reports/event_study_windows.csv`
-- `reports/timing_experiment_summary.csv`
-- `reports/metric_audit_report.md`
-- `reports/research_findings.md`
-
-Dashboard sections:
-
-- Overview
-- Feature Lab
-- Event Study
-- Rule Lab
-- Score Components
-
 ## Configuration
 
 Main parameters live in `config.yaml`. The default instrument is:
@@ -102,35 +145,23 @@ Main parameters live in `config.yaml`. The default instrument is:
 
 Set `data_mode` to `mock`, `csv`, or `wind`.
 
-For Wind mode, keep the Wind terminal logged in, then run Python from a normal local shell:
-
-```powershell
-python scripts/run_backtest.py
-streamlit run app.py
-```
-
-If `w.start()` reports login failure inside Codex sandbox but works in a normal terminal, run the Wind-backed commands outside the sandbox. The provider reads query templates and field names from `config.yaml`.
-
 ## Wind Integration Notes
 
 `src/wind_data_provider.py` uses:
 
 - `w.tdays` for the trading calendar
 - `w.wsd` for underlying daily bars and selected option daily bars
-- `w.wset("optionchain", ...)` for option metadata
+- `w.wset("optionchain", ...)` for option metadata when configured
 - `w.wss(..., tradeDate=...)` to merge same-day option OHLC, volume, and open interest into the option chain
+
+Current config uses synthetic MO contract-code generation with Wind quote snapshots, which avoids depending entirely on `w.wset("optionchain", ...)` availability.
 
 Before changing instruments or vendors, confirm the exact Wind field names with the Wind code generator and place them in `config.yaml`.
 
-Expected unified option fields are:
+Expected unified option fields:
 
 `date, option_code, call_put, strike, expire_date, open, high, low, close, volume, open_interest`
 
-Expected unified underlying fields are:
+Expected unified underlying fields:
 
 `date, open, high, low, close, volume`
-
-
-v1 张这样哈哈 好差的pnl
-<img width="1616" height="1251" alt="image" src="https://github.com/user-attachments/assets/4ededdb3-fa10-4461-b9e2-092eb22e2c9f" />
-
