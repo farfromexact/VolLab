@@ -1,0 +1,71 @@
+underlying_code: "000852.SH"
+option_prefix: "MO"
+contract_multiplier: 100
+risk_free_rate: 0.02
+min_dte: 10
+max_dte: 35
+roll_dte_threshold: 7
+holding_days: [1, 2, 3, 5]
+entry_mode: "next_open"
+fallback_entry_mode: "next_close"
+slippage_rate: 0.005
+fee_per_contract: 0
+iv_lookback: 252
+rv_windows: [5, 10, 20, 60]
+data_mode: "wind"
+backtest_start_date: "2024-01-02"
+backtest_end_date: "2024-03-29"
+
+mock_start_date: "2022-01-03"
+mock_end_date: "2024-12-31"
+mock_seed: 42
+mock_start_price: 5000
+
+csv_paths:
+  trading_calendar: "data/mock/trading_calendar.csv"
+  underlying_daily: "data/mock/underlying_daily.csv"
+  option_chain: "data/mock/option_chain.csv"
+  option_daily: "data/mock/option_daily.csv"
+
+wind:
+  connect_timeout: 60
+  tdays_options: "TradingCalendar=CFFEX"
+  wsd_options: "PriceAdj=F"
+  wss_options: "priceAdj=F"
+  option_chain:
+    dataset: "optionchain"
+    params_template: "date={date};us_code={underlying_code}"
+    prefer_synthetic: true
+    exchange_suffix: "CFE"
+    months_ahead: 4
+    strike_step: 100
+    strike_pct_range: 0.18
+    code_template: "{option_prefix}{yymm}-{call_put}-{strike}.{exchange_suffix}"
+  fields:
+    underlying_daily:
+      open: "open"
+      high: "high"
+      low: "low"
+      close: "close"
+      volume: "volume"
+    option_quote:
+      open: "open"
+      high: "high"
+      low: "low"
+      close: "close"
+      volume: "volume"
+      open_interest: "oi"
+    option_chain:
+      option_code: "option_code"
+      strike: "strike_price"
+      expire_date: "last_tradedate"
+      call_put: "call_put"
+      multiplier: "multiplier"
+
+wind_field_mapping:
+  option_chain:
+    option_code: "option_code"
+    strike: "strike_price"
+    expire_date: "last_tradedate"
+    call_put: "call_put"
+    multiplier: "multiplier"
