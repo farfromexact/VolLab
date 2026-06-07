@@ -14,7 +14,7 @@ iv_lookback: 252
 rv_windows: [5, 10, 20, 60]
 data_mode: "wind"
 backtest_start_date: "2024-01-02"
-backtest_end_date: "2024-03-29"
+backtest_end_date: "2026-06-05"
 
 mock_start_date: "2022-01-03"
 mock_end_date: "2024-12-31"
