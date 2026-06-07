@@ -175,6 +175,14 @@ def fmt_score(value):
     return "NA" if pd.isna(value) else f"{float(value):.0f}"
 
 
+def fmt_number(value, decimals: int = 1):
+    return "NA" if pd.isna(value) else f"{float(value):,.{decimals}f}"
+
+
+def fmt_count(value):
+    return "NA" if pd.isna(value) else f"{int(value):,}"
+
+
 def latest_feature_row(feature_table: pd.DataFrame, latest_date) -> pd.Series:
     if feature_table.empty:
         return pd.Series(dtype="float64")
@@ -185,6 +193,150 @@ def latest_feature_row(feature_table: pd.DataFrame, latest_date) -> pd.Series:
         if not rows.empty:
             return rows.sort_values("signal_date").iloc[-1]
     return feature_table.sort_values("signal_date").iloc[-1]
+
+
+def render_conclusion(config, reports, artifacts, source_mode):
+    st.title("VolLab Research Conclusion")
+    st.caption(
+        f"{config.get('underlying_code')} MO long-gamma research | "
+        f"data source: {source_mode} | "
+        "v0.2 timing research + v0.3 Wind-backed event research"
+    )
+
+    st.warning(
+        "Final verdict: current evidence does not support a stable mechanical long-gamma buying rule. "
+        "The project should be read as a research archive and dashboard, not as a live trading signal engine."
+    )
+
+    summary = reports.get("summary", pd.DataFrame())
+    baseline = summary.iloc[0] if not summary.empty else pd.Series(dtype="float64")
+    quality = artifacts.get("data_quality_fields", pd.DataFrame())
+    strangle = artifacts.get("straddle_vs_strangle_summary", pd.DataFrame())
+    dte = artifacts.get("dte_research_summary", pd.DataFrame())
+    exit_summary = artifacts.get("exit_policy_summary", pd.DataFrame())
+
+    signal_quality = np.nan
+    if not quality.empty and {"field", "completeness"}.issubset(quality.columns):
+        signal_quality = quality.loc[
+            quality["field"].isin(
+                [
+                    "signal_call_close",
+                    "signal_put_close",
+                    "signal_call_volume",
+                    "signal_put_volume",
+                    "signal_call_open_interest",
+                    "signal_put_open_interest",
+                ]
+            ),
+            "completeness",
+        ].mean()
+
+    metric_cols = st.columns(5)
+    metric_cols[0].metric("ATM trades", fmt_count(baseline.get("total_trades", np.nan)))
+    metric_cols[1].metric("Win rate", fmt_pct(baseline.get("win_rate", np.nan)))
+    metric_cols[2].metric("Median return", fmt_pct(baseline.get("median_return", np.nan)))
+    metric_cols[3].metric("Total net PnL", fmt_number(baseline.get("total_net_pnl", np.nan), 0))
+    metric_cols[4].metric("Signal quote quality", fmt_pct(signal_quality))
+
+    zh_col, en_col = st.columns(2)
+    with zh_col:
+        st.subheader("中文结论")
+        st.markdown(
+            """
+- v0.2 没有找到稳定、单调、可直接交易的 ATM straddle 买入前置信号。
+- v0.3 已补齐 Wind 真实 signal-date call/put close、volume、open interest，数据质量问题基本解决。
+- long gamma 的赢家真实存在，但主要来自少数 `up_shock` / `down_shock` 冲击事件。
+- 多数普通交易日仍承受 theta decay，ATM 与 OTM 的中位收益都不稳。
+- 当前不能上线为交易信号系统；更适合归档为研究 dashboard。
+            """.strip()
+        )
+
+    with en_col:
+        st.subheader("English Conclusion")
+        st.markdown(
+            """
+- v0.2 did not find a stable, monotonic, directly tradable ATM straddle pre-signal.
+- v0.3 fixed the core Wind-backed signal-date option quality gap.
+- Long-gamma winners are real, but they are dominated by a few shock events.
+- Ordinary trading days still suffer from theta decay and negative median returns.
+- This is a research archive and dashboard, not a production trading signal engine.
+            """.strip()
+        )
+
+    st.subheader("What The Research Accepts")
+    accept_rows = [
+        {
+            "conclusion": "MO long gamma has convex payoff in shock regimes.",
+            "status": "Supported",
+            "evidence": "Shock buckets explain the largest winners across horizons.",
+        },
+        {
+            "conclusion": "Signal-date premium, volume, open interest, DTE, and realized-vol regime are valid next research variables.",
+            "status": "Supported",
+            "evidence": "v0.3 has complete signal-date provider quotes and rebuilt event/DTE panels.",
+        },
+        {
+            "conclusion": "A stable mechanical buy rule has been found.",
+            "status": "Not supported",
+            "evidence": "Median returns remain negative and results depend on a small number of spikes.",
+        },
+    ]
+    st.dataframe(pd.DataFrame(accept_rows), width="stretch", hide_index=True)
+
+    st.subheader("Key Research Panels")
+    panel_cols = st.columns(3)
+
+    with panel_cols[0]:
+        st.markdown("**Best-looking DTE slice**")
+        dte_slice = pd.DataFrame()
+        if not dte.empty:
+            dte_slice = dte.loc[
+                dte["post_warmup_only"].astype(bool).eq(True)
+                & dte["holding_days"].astype(int).eq(5)
+                & dte["event_type"].astype(str).eq("all")
+                & dte["dte_bucket"].astype(str).eq("7-10")
+            ]
+        if dte_slice.empty:
+            st.write("NA")
+        else:
+            row = dte_slice.iloc[0]
+            st.metric("7-10 DTE / 5d", fmt_pct(row.get("avg_return", np.nan)))
+            st.caption(f"trades={fmt_count(row.get('trade_count', np.nan))}, median={fmt_pct(row.get('median_return', np.nan))}")
+
+    with panel_cols[1]:
+        st.markdown("**Best-looking exit policy**")
+        stop_loss = pd.DataFrame()
+        if not exit_summary.empty:
+            stop_loss = exit_summary.loc[exit_summary["policy"].astype(str).eq("stop_loss_30pct")]
+        if stop_loss.empty:
+            st.write("NA")
+        else:
+            row = stop_loss.iloc[0]
+            st.metric("stop_loss_30pct", fmt_number(row.get("total_net_pnl", np.nan), 0))
+            st.caption(f"median={fmt_pct(row.get('median_return', np.nan))}, top 5 / total={fmt_number(row.get('top_5_wins_to_total_pnl', np.nan), 2)}")
+
+    with panel_cols[2]:
+        st.markdown("**OTM strangle read**")
+        otm_all = pd.DataFrame()
+        if not strangle.empty:
+            otm_all = strangle.loc[
+                strangle["strategy"].astype(str).str.contains("OTM strangle", na=False)
+                & strangle["event_type"].astype(str).eq("all")
+                & strangle["dte_bucket"].astype(str).eq("all")
+            ]
+        if otm_all.empty:
+            st.write("NA")
+        else:
+            avg_return = pd.to_numeric(otm_all["avg_return"], errors="coerce").max()
+            worst_median = pd.to_numeric(otm_all["median_return"], errors="coerce").min()
+            st.metric("best avg return", fmt_pct(avg_return))
+            st.caption(f"all OTM median returns are negative; worst median={fmt_pct(worst_median)}")
+
+    st.subheader("Closing Research Question")
+    st.info(
+        "Next work should not start from PnL optimization. It should test whether pre-signal premium, DTE, "
+        "option activity, realized-volatility regime, and event calendars can identify shock-prone windows before the event."
+    )
 
 
 def render_overview(config, underlying, reports, artifacts, source_mode):
@@ -503,8 +655,9 @@ def render_strangle_lab(artifacts: dict[str, pd.DataFrame]):
 
 config, underlying, reports, artifacts, source_mode = load_dashboard_data(dashboard_file_fingerprint())
 
-tab_overview, tab_feature, tab_event, tab_rule, tab_score, tab_data_quality, tab_event_type, tab_dte, tab_exit, tab_strangle = st.tabs(
+tab_conclusion, tab_overview, tab_feature, tab_event, tab_rule, tab_score, tab_data_quality, tab_event_type, tab_dte, tab_exit, tab_strangle = st.tabs(
     [
+        "Conclusion",
         "Overview",
         "Feature Lab",
         "Event Study",
@@ -517,6 +670,9 @@ tab_overview, tab_feature, tab_event, tab_rule, tab_score, tab_data_quality, tab
         "Straddle vs Strangle",
     ]
 )
+
+with tab_conclusion:
+    render_conclusion(config, reports, artifacts, source_mode)
 
 with tab_overview:
     render_overview(config, underlying, reports, artifacts, source_mode)
