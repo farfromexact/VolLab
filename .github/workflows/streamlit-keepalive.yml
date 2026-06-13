@@ -2,7 +2,7 @@ name: Streamlit Keepalive
 
 on:
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "*/15 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -17,24 +17,64 @@ jobs:
     name: Ping Streamlit app
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      APP_URL: https://vollab-ukcjfbfures7me7u5wjhms.streamlit.app
+      STREAMLIT_COOKIE: ${{ secrets.STREAMLIT_COOKIE }}
 
     steps:
       - name: Ping deployed Streamlit app
         run: |
-          set -euo pipefail
-          URL="https://vollab-ukcjfbfures7me7u5wjhms.streamlit.app"
-          echo "Pinging ${URL} at $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          curl \
-            --fail \
-            --location \
-            --silent \
-            --show-error \
-            --connect-timeout 20 \
-            --max-time 180 \
-            --retry 5 \
-            --retry-delay 30 \
-            --retry-all-errors \
-            --user-agent "VolLab-GitHub-Actions-Keepalive" \
-            "${URL}" \
-            > /dev/null
+          set -uo pipefail
+
+          echo "Pinging ${APP_URL} at $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+          curl_args=(
+            --location
+            --max-redirs 10
+            --silent
+            --show-error
+            --connect-timeout 20
+            --max-time 180
+            --retry 5
+            --retry-delay 30
+            --retry-all-errors
+            --user-agent "VolLab-GitHub-Actions-Keepalive"
+            --output /dev/null
+            --write-out $'http_code=%{http_code}\neffective_url=%{url_effective}\nredirects=%{num_redirects}\n'
+          )
+
+          if [ -n "${STREAMLIT_COOKIE:-}" ]; then
+            echo "Using STREAMLIT_COOKIE secret for authenticated keepalive request."
+            curl_args+=(--header "Cookie: ${STREAMLIT_COOKIE}")
+          fi
+
+          curl_output="$(curl "${curl_args[@]}" "${APP_URL}" 2>&1)"
+          curl_status=$?
+
+          echo "${curl_output}"
+          echo "curl_status=${curl_status}"
+
+          http_code="$(printf '%s\n' "${curl_output}" | sed -n 's/^http_code=//p' | tail -n 1)"
+          effective_url="$(printf '%s\n' "${curl_output}" | sed -n 's/^effective_url=//p' | tail -n 1)"
+          redirects="$(printf '%s\n' "${curl_output}" | sed -n 's/^redirects=//p' | tail -n 1)"
+
+          echo "http_code=${http_code:-unknown}"
+          echo "effective_url=${effective_url:-unknown}"
+          echo "redirects=${redirects:-unknown}"
+
+          if [[ "${effective_url:-}" == *"/-/login"* || "${curl_status}" == "47" ]]; then
+            echo "::warning::Streamlit app appears to require login or hit a login redirect loop. This keepalive cannot wake a private app without a valid STREAMLIT_COOKIE secret."
+            exit 0
+          fi
+
+          if [ "${curl_status}" -ne 0 ]; then
+            echo "::error::Streamlit keepalive curl request failed with exit code ${curl_status}."
+            exit "${curl_status}"
+          fi
+
+          if [[ "${http_code:-0}" =~ ^[0-9]+$ ]] && [ "${http_code}" -ge 400 ]; then
+            echo "::error::Streamlit keepalive returned HTTP ${http_code}."
+            exit 1
+          fi
+
           echo "Streamlit keepalive ping succeeded."
