@@ -1,0 +1,40 @@
+name: Streamlit Keepalive
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: streamlit-keepalive
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    name: Ping Streamlit app
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Ping deployed Streamlit app
+        run: |
+          set -euo pipefail
+          URL="https://vollab-ukcjfbfures7me7u5wjhms.streamlit.app"
+          echo "Pinging ${URL} at $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          curl \
+            --fail \
+            --location \
+            --silent \
+            --show-error \
+            --connect-timeout 20 \
+            --max-time 180 \
+            --retry 5 \
+            --retry-delay 30 \
+            --retry-all-errors \
+            --user-agent "VolLab-GitHub-Actions-Keepalive" \
+            "${URL}" \
+            > /dev/null
+          echo "Streamlit keepalive ping succeeded."
