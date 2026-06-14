@@ -655,55 +655,45 @@ def render_strangle_lab(artifacts: dict[str, pd.DataFrame]):
 
 config, underlying, reports, artifacts, source_mode = load_dashboard_data(dashboard_file_fingerprint())
 
-tab_conclusion, tab_overview, tab_feature, tab_event, tab_rule, tab_score, tab_data_quality, tab_event_type, tab_dte, tab_exit, tab_strangle = st.tabs(
-    [
-        "Conclusion",
-        "Overview",
-        "Feature Lab",
-        "Event Study",
-        "Rule Lab",
-        "Score Components",
-        "Data Quality",
-        "Event Type Lab",
-        "DTE Lab",
-        "Exit Policy Lab",
-        "Straddle vs Strangle",
-    ]
-)
+PAGES = [
+    "Conclusion",
+    "Overview",
+    "Feature Lab",
+    "Event Study",
+    "Rule Lab",
+    "Score Components",
+    "Data Quality",
+    "Event Type Lab",
+    "DTE Lab",
+    "Exit Policy Lab",
+    "Straddle vs Strangle",
+]
 
-with tab_conclusion:
+page = st.sidebar.radio("View", PAGES, index=0)
+
+if page == "Conclusion":
     render_conclusion(config, reports, artifacts, source_mode)
-
-with tab_overview:
+elif page == "Overview":
     render_overview(config, underlying, reports, artifacts, source_mode)
-
-with tab_feature:
+elif page == "Feature Lab":
     render_feature_lab(artifacts.get("feature_table", pd.DataFrame()))
-
-with tab_event:
+elif page == "Event Study":
     render_event_study(artifacts)
-
-with tab_rule:
+elif page == "Rule Lab":
     render_rule_lab(
         artifacts.get("feature_table", pd.DataFrame()),
         artifacts.get("label_table", pd.DataFrame()),
         reports.get("trade_details", pd.DataFrame()),
     )
-
-with tab_score:
+elif page == "Score Components":
     render_score_components(artifacts.get("feature_table", pd.DataFrame()))
-
-with tab_data_quality:
+elif page == "Data Quality":
     render_data_quality_lab(artifacts)
-
-with tab_event_type:
+elif page == "Event Type Lab":
     render_event_type_lab(artifacts)
-
-with tab_dte:
+elif page == "DTE Lab":
     render_dte_lab(artifacts)
-
-with tab_exit:
+elif page == "Exit Policy Lab":
     render_exit_policy_lab(artifacts)
-
-with tab_strangle:
+elif page == "Straddle vs Strangle":
     render_strangle_lab(artifacts)
